@@ -1,0 +1,12 @@
+workflows:
+  android-release:
+    name: Build APK
+    environment:
+      android: latest
+    scripts:
+      - name: Make gradlew executable
+        script: chmod +x gradlew
+      - name: Build
+        script: ./gradlew assembleRelease
+    artifacts:
+      - app/build/outputs/apk/release/*.apk
