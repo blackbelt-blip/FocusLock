@@ -5,20 +5,19 @@ workflows:
     environment:
       java: 17
     scripts:
-      - name: Create clean FocusLock project
+            - name: Build REAL FocusLock
         script: |
-          rm -rf App app
+          rm -rf app
           mkdir -p app/src/main/java/com/focuslock/app
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
 
+          # --- settings ---
           echo "rootProject.name='FocusLock'" > settings.gradle
           echo "include ':app'" >> settings.gradle
 
           cat > build.gradle <<'EOF'
-          buildscript {
-            repositories { google(); mavenCentral() }
-            dependencies { classpath 'com.android.tools.build:gradle:8.2.2' }
-          }
+          buildscript { repositories { google(); mavenCentral() } dependencies { classpath 'com.android.tools.build:gradle:8.2.2' } }
           allprojects { repositories { google(); mavenCentral() } }
           EOF
 
@@ -31,36 +30,94 @@ workflows:
               applicationId "com.focuslock.app"
               minSdk 24
               targetSdk 34
-              versionCode 1
+              versionCode 2
               versionName "1.0"
             }
-            buildTypes { release { minifyEnabled false } }
+            buildTypes { release { minifyEnabled false } debug { minifyEnabled false } }
           }
           EOF
 
+          # --- Manifest ---
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.focuslock.app">
+            <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" xmlns:tools="http://schemas.android.com/tools"/>
+            <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+            <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+            <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
             <application android:label="FocusLock" android:theme="@android:style/Theme.Material.Light.NoActionBar">
               <activity android:name=".MainActivity" android:exported="true">
                 <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
               </activity>
+              <service android:name=".BlockerService" android:exported="false" android:foregroundServiceType="dataSync"/>
             </application>
           </manifest>
           EOF
 
+          # --- MainActivity ---
           cat > app/src/main/java/com/focuslock/app/MainActivity.java <<'EOF'
           package com.focuslock.app;
-          import android.app.Activity; import android.os.Bundle; import android.widget.TextView;
+          import android.app.*;
+          import android.content.*;
+          import android.net.Uri;
+          import android.os.*;
+          import android.provider.Settings;
+          import android.widget.*;
+          import android.view.Gravity;
           public class MainActivity extends Activity {
-            protected void onCreate(Bundle b){ super.onCreate(b); TextView t=new TextView(this); t.setTextSize(24); t.setText("FocusLock APK built!\n\nThis is the base. Next step I'll add the real blocker code."); setContentView(t); }
+            TextView status;
+            @Override protected void onCreate(Bundle b){
+              super.onCreate(b);
+              LinearLayout lay = new LinearLayout(this); lay.setOrientation(LinearLayout.VERTICAL); lay.setPadding(60,120,60,60); lay.setGravity(Gravity.CENTER);
+              status = new TextView(this); status.setTextSize(20); status.setPadding(0,0,40);
+              Button start = new Button(this); start.setText("Start 25-min Focus");
+              Button stop = new Button(this); stop.setText("Stop");
+              lay.addView(status); lay.addView(start); lay.addView(stop); setContentView(lay);
+              updateStatus();
+              start.setOnClickListener(v -> { requestPerms(); long end = System.currentTimeMillis()+25*60*1000; getSharedPreferences("f",0).edit().putLong("end",end).apply(); startService(new Intent(this, BlockerService.class)); updateStatus(); toast("Focus ON - Instagram/TikTok/X blocked"); });
+              stop.setOnClickListener(v -> { getSharedPreferences("f",0).edit().putLong("end",0).apply(); stopService(new Intent(this, BlockerService.class)); updateStatus(); toast("Focus OFF"); });
+            }
+            void updateStatus(){ long end = getSharedPreferences("f",0).getLong("end",0); status.setText(end>System.currentTimeMillis()? "FOCUS ACTIVE\n"+((end-System.currentTimeMillis())/60000)+" min left" : "Focus is OFF"); }
+            void toast(String s){ Toast.makeText(this,s,Toast.LENGTH_SHORT).show(); }
+            void requestPerms(){
+              if(!Settings.canDrawOverlays(this)) startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:"+getPackageName())));
+              try{ getSystemService(UsageStatsManager.class).queryUsageStats(0,0,0); } catch(Exception e){ startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)); toast("Enable Usage Access for FocusLock"); }
+            }
+            @Override protected void onResume(){ super.onResume(); updateStatus(); }
+          }
+          EOF
+
+          # --- BlockerService ---
+          cat > app/src/main/java/com/focuslock/app/BlockerService.java <<'EOF'
+          package com.focuslock.app;
+          import android.app.*;
+          import android.content.*;
+          import android.app.usage.*;
+          import android.os.*;
+          import java.util.*;
+          public class BlockerService extends Service {
+            Handler h = new Handler(Looper.getMainLooper());
+            String[] blocked = {"com.instagram.android","com.zhiliaoapp.musically","com.ss.android.ugc.trill","com.twitter.android","com.facebook.katana","com.snapchat.android"};
+            Runnable r = new Runnable(){ public void run(){
+              long end = getSharedPreferences("f",0).getLong("end",0);
+              if(System.currentTimeMillis()>end){ stopSelf(); return; }
+              String fg = getFg();
+              for(String p: blocked) if(p.equals(fg)){ Intent home = new Intent(Intent.ACTION_MAIN); home.addCategory(Intent.CATEGORY_HOME); home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(home); }
+              h.postDelayed(this,800);
+            }};
+            @Override public int onStartCommand(Intent i,int f,int s){
+              Notification n = new Notification.Builder(this,"f").setContentTitle("FocusLock active").setContentText("Blocking distractions").setSmallIcon(android.R.drawable.ic_lock_idle_lock).build();
+              getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel("f","focus",NotificationManager.IMPORTANCE_LOW));
+              startForeground(1,n); h.post(r); return START_STICKY;
+            }
+            String getFg(){ UsageStatsManager usm = (UsageStatsManager)getSystemService(USAGE_STATS_SERVICE); long t=System.currentTimeMillis(); List<UsageStats> l=usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY,t-5000,t); if(l==null||l.isEmpty())return""; UsageStats recent=null; for(UsageStats u:l)if(recent==null||u.getLastTimeUsed()>recent.getLastTimeUsed())recent=u; return recent!=null?recent.getPackageName():""; }
+            @Override public IBinder onBind(Intent i){ return null; }
           }
           EOF
 
           cat > app/src/main/res/values/strings.xml <<'EOF'
           <resources><string name="app_name">FocusLock</string></resources>
           EOF
-
-      - name: Build APK
+            - name: Build
         script: gradle assembleDebug
     artifacts:
-      - "**/app/build/outputs/apk/debug/*.apk"
+            - "**/app/build/outputs/apk/debug/*.apk"
