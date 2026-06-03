@@ -5,10 +5,17 @@ workflows:
     environment:
       java: 17
     scripts:
-      - name: Find project and build
+      - name: SHOW ME YOUR FILES
         script: |
-          PROJECT=$(find . -type d -name "app" -exec test -e "{}/build.gradle" \; -print | head -1 | xargs dirname)
-          echo "Building in $PROJECT"
+          echo "=== ROOT ==="
+          ls -la
+          echo "=== FIND GRADLE FILES ==="
+          find . -name "build.gradle" -o -name "settings.gradle" | head -20
+          echo "=== FIND APP FOLDER ==="
+          find . -type d -name "app"
+      - name: Build
+        script: |
+          PROJECT=$(find . -name "settings.gradle" -exec dirname {} \; | head -1)
           cd "$PROJECT"
           gradle assembleRelease
     artifacts:
