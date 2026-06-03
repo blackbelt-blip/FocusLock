@@ -5,27 +5,62 @@ workflows:
     environment:
       java: 17
     scripts:
-      - name: Fix project structure
+      - name: Create clean FocusLock project
         script: |
-          # rename App to app
-          [ -d App ] && mv App app
-          
-          # create missing settings.gradle
-          echo "rootProject.name = 'FocusLock'" > settings.gradle
+          rm -rf App app
+          mkdir -p app/src/main/java/com/focuslock/app
+          mkdir -p app/src/main/res/values
+
+          echo "rootProject.name='FocusLock'" > settings.gradle
           echo "include ':app'" >> settings.gradle
-          
-          # create missing top-level build.gradle
+
           cat > build.gradle <<'EOF'
           buildscript {
-              repositories { google(); mavenCentral() }
-              dependencies { classpath 'com.android.tools.build:gradle:8.2.2' }
+            repositories { google(); mavenCentral() }
+            dependencies { classpath 'com.android.tools.build:gradle:8.2.2' }
           }
-          allprojects {
-              repositories { google(); mavenCentral() }
+          allprojects { repositories { google(); mavenCentral() } }
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          apply plugin: 'com.android.application'
+          android {
+            namespace 'com.focuslock.app'
+            compileSdk 34
+            defaultConfig {
+              applicationId "com.focuslock.app"
+              minSdk 24
+              targetSdk 34
+              versionCode 1
+              versionName "1.0"
+            }
+            buildTypes { release { minifyEnabled false } }
           }
           EOF
-          
-      - name: Build
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.focuslock.app">
+            <application android:label="FocusLock" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+              <activity android:name=".MainActivity" android:exported="true">
+                <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+              </activity>
+            </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/focuslock/app/MainActivity.java <<'EOF'
+          package com.focuslock.app;
+          import android.app.Activity; import android.os.Bundle; import android.widget.TextView;
+          public class MainActivity extends Activity {
+            protected void onCreate(Bundle b){ super.onCreate(b); TextView t=new TextView(this); t.setTextSize(24); t.setText("FocusLock APK built!\n\nThis is the base. Next step I'll add the real blocker code."); setContentView(t); }
+          }
+          EOF
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources><string name="app_name">FocusLock</string></resources>
+          EOF
+
+      - name: Build APK
         script: gradle assembleRelease
     artifacts:
       - "**/app/build/outputs/apk/release/*.apk"
