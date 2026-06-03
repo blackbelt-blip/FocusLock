@@ -5,9 +5,12 @@ workflows:
     environment:
       java: 17
     scripts:
-      - name: Make gradlew executable
-        script: chmod +x ./gradlew
-      - name: Build release APK
-        script: ./gradlew assembleRelease
+      - name: Find project and build
+        script: |
+          PROJECT=$(find . -type f -name "gradlew" | head -1 | xargs dirname)
+          echo "Building in $PROJECT"
+          cd $PROJECT
+          chmod +x gradlew
+          ./gradlew assembleRelease
     artifacts:
-      - app/build/outputs/apk/release/*.apk
+      - "**/app/build/outputs/apk/release/*.apk"
