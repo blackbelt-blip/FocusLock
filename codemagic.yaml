@@ -5,14 +5,12 @@ workflows:
     environment:
       java: 17
     scripts:
-            - name: Build REAL FocusLock
+      - name: Build REAL FocusLock
         script: |
           rm -rf app
           mkdir -p app/src/main/java/com/focuslock/app
           mkdir -p app/src/main/res/values
-          mkdir -p app/src/main/res/xml
 
-          # --- settings ---
           echo "rootProject.name='FocusLock'" > settings.gradle
           echo "include ':app'" >> settings.gradle
 
@@ -33,11 +31,12 @@ workflows:
               versionCode 2
               versionName "1.0"
             }
-            buildTypes { release { minifyEnabled false } debug { minifyEnabled false } }
+            buildTypes {
+              debug { minifyEnabled false }
+            }
           }
           EOF
 
-          # --- Manifest ---
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.focuslock.app">
             <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" xmlns:tools="http://schemas.android.com/tools"/>
@@ -46,78 +45,132 @@ workflows:
             <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
             <application android:label="FocusLock" android:theme="@android:style/Theme.Material.Light.NoActionBar">
               <activity android:name=".MainActivity" android:exported="true">
-                <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+                <intent-filter>
+                  <action android:name="android.intent.action.MAIN"/>
+                  <category android:name="android.intent.category.LAUNCHER"/>
+                </intent-filter>
               </activity>
-              <service android:name=".BlockerService" android:exported="false" android:foregroundServiceType="dataSync"/>
+              <service android:name=".BlockerService" android:exported="false"/>
             </application>
           </manifest>
           EOF
 
-          # --- MainActivity ---
           cat > app/src/main/java/com/focuslock/app/MainActivity.java <<'EOF'
           package com.focuslock.app;
-          import android.app.*;
-          import android.content.*;
+          import android.app.Activity;
+          import android.content.Intent;
           import android.net.Uri;
-          import android.os.*;
+          import android.os.Bundle;
           import android.provider.Settings;
-          import android.widget.*;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+          import android.widget.Toast;
           import android.view.Gravity;
           public class MainActivity extends Activity {
             TextView status;
-            @Override protected void onCreate(Bundle b){
+            protected void onCreate(Bundle b){
               super.onCreate(b);
-              LinearLayout lay = new LinearLayout(this); lay.setOrientation(LinearLayout.VERTICAL); lay.setPadding(60,120,60,60); lay.setGravity(Gravity.CENTER);
-              status = new TextView(this); status.setTextSize(20); status.setPadding(0,0,40);
-              Button start = new Button(this); start.setText("Start 25-min Focus");
-              Button stop = new Button(this); stop.setText("Stop");
-              lay.addView(status); lay.addView(start); lay.addView(stop); setContentView(lay);
-              updateStatus();
-              start.setOnClickListener(v -> { requestPerms(); long end = System.currentTimeMillis()+25*60*1000; getSharedPreferences("f",0).edit().putLong("end",end).apply(); startService(new Intent(this, BlockerService.class)); updateStatus(); toast("Focus ON - Instagram/TikTok/X blocked"); });
-              stop.setOnClickListener(v -> { getSharedPreferences("f",0).edit().putLong("end",0).apply(); stopService(new Intent(this, BlockerService.class)); updateStatus(); toast("Focus OFF"); });
+              LinearLayout lay = new LinearLayout(this);
+              lay.setOrientation(1);
+              lay.setPadding(60,120,60,60);
+              lay.setGravity(Gravity.CENTER);
+              status = new TextView(this);
+              status.setTextSize(20);
+              Button start = new Button(this);
+              start.setText("Start 25-min Focus");
+              Button stop = new Button(this);
+              stop.setText("Stop");
+              lay.addView(status);
+              lay.addView(start);
+              lay.addView(stop);
+              setContentView(lay);
+              update();
+              start.setOnClickListener(v->{
+                requestPerms();
+                long end = System.currentTimeMillis()+25*60*1000;
+                getSharedPreferences("f",0).edit().putLong("end",end).apply();
+                startService(new Intent(this,BlockerService.class));
+                update();
+                Toast.makeText(this,"Focus ON",0).show();
+              });
+              stop.setOnClickListener(v->{
+                getSharedPreferences("f",0).edit().putLong("end",0).apply();
+                stopService(new Intent(this,BlockerService.class));
+                update();
+                Toast.makeText(this,"Focus OFF",0).show();
+              });
             }
-            void updateStatus(){ long end = getSharedPreferences("f",0).getLong("end",0); status.setText(end>System.currentTimeMillis()? "FOCUS ACTIVE\n"+((end-System.currentTimeMillis())/60000)+" min left" : "Focus is OFF"); }
-            void toast(String s){ Toast.makeText(this,s,Toast.LENGTH_SHORT).show(); }
+            void update(){
+              long end = getSharedPreferences("f",0).getLong("end",0);
+              status.setText(end>System.currentTimeMillis()? "FOCUS ACTIVE": "Focus is OFF");
+            }
             void requestPerms(){
-              if(!Settings.canDrawOverlays(this)) startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:"+getPackageName())));
-              try{ getSystemService(UsageStatsManager.class).queryUsageStats(0,0,0); } catch(Exception e){ startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)); toast("Enable Usage Access for FocusLock"); }
+              if(!Settings.canDrawOverlays(this)){
+                startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:"+getPackageName())));
+              }
+              startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS));
             }
-            @Override protected void onResume(){ super.onResume(); updateStatus(); }
+            protected void onResume(){ super.onResume(); update(); }
           }
           EOF
 
-          # --- BlockerService ---
           cat > app/src/main/java/com/focuslock/app/BlockerService.java <<'EOF'
           package com.focuslock.app;
           import android.app.*;
-          import android.content.*;
-          import android.app.usage.*;
-          import android.os.*;
-          import java.util.*;
+          import android.content.Intent;
+          import android.app.usage.UsageStats;
+          import android.app.usage.UsageStatsManager;
+          import android.os.Handler;
+          import android.os.IBinder;
+          import android.os.Looper;
+          import java.util.List;
           public class BlockerService extends Service {
             Handler h = new Handler(Looper.getMainLooper());
-            String[] blocked = {"com.instagram.android","com.zhiliaoapp.musically","com.ss.android.ugc.trill","com.twitter.android","com.facebook.katana","com.snapchat.android"};
-            Runnable r = new Runnable(){ public void run(){
-              long end = getSharedPreferences("f",0).getLong("end",0);
-              if(System.currentTimeMillis()>end){ stopSelf(); return; }
-              String fg = getFg();
-              for(String p: blocked) if(p.equals(fg)){ Intent home = new Intent(Intent.ACTION_MAIN); home.addCategory(Intent.CATEGORY_HOME); home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(home); }
-              h.postDelayed(this,800);
-            }};
-            @Override public int onStartCommand(Intent i,int f,int s){
-              Notification n = new Notification.Builder(this,"f").setContentTitle("FocusLock active").setContentText("Blocking distractions").setSmallIcon(android.R.drawable.ic_lock_idle_lock).build();
-              getSystemService(NotificationManager.class).createNotificationChannel(new NotificationChannel("f","focus",NotificationManager.IMPORTANCE_LOW));
-              startForeground(1,n); h.post(r); return START_STICKY;
+            String[] blocked = {"com.instagram.android","com.zhiliaoapp.musically","com.twitter.android","com.facebook.katana"};
+            Runnable r = new Runnable(){
+              public void run(){
+                long end = getSharedPreferences("f",0).getLong("end",0);
+                if(System.currentTimeMillis()>end){ stopSelf(); return; }
+                String fg = getFg();
+                for(String p: blocked){
+                  if(p.equals(fg)){
+                    Intent home = new Intent(Intent.ACTION_MAIN);
+                    home.addCategory(Intent.CATEGORY_HOME);
+                    home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(home);
+                  }
+                }
+                h.postDelayed(this,800);
+              }
+            };
+            public int onStartCommand(Intent i,int f,int s){
+              NotificationChannel ch = new NotificationChannel("f","focus",NotificationManager.IMPORTANCE_LOW);
+              getSystemService(NotificationManager.class).createNotificationChannel(ch);
+              Notification n = new Notification.Builder(this,"f").setContentTitle("FocusLock").setContentText("Blocking").setSmallIcon(android.R.drawable.ic_lock_idle_lock).build();
+              startForeground(1,n);
+              h.post(r);
+              return START_STICKY;
             }
-            String getFg(){ UsageStatsManager usm = (UsageStatsManager)getSystemService(USAGE_STATS_SERVICE); long t=System.currentTimeMillis(); List<UsageStats> l=usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY,t-5000,t); if(l==null||l.isEmpty())return""; UsageStats recent=null; for(UsageStats u:l)if(recent==null||u.getLastTimeUsed()>recent.getLastTimeUsed())recent=u; return recent!=null?recent.getPackageName():""; }
-            @Override public IBinder onBind(Intent i){ return null; }
+            String getFg(){
+              UsageStatsManager usm = (UsageStatsManager)getSystemService(USAGE_STATS_SERVICE);
+              long t = System.currentTimeMillis();
+              List<UsageStats> l = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, t-5000, t);
+              if(l==null||l.isEmpty()) return "";
+              UsageStats recent = null;
+              for(UsageStats u: l){
+                if(recent==null || u.getLastTimeUsed()>recent.getLastTimeUsed()) recent = u;
+              }
+              return recent!=null? recent.getPackageName(): "";
+            }
+            public IBinder onBind(Intent i){ return null; }
           }
           EOF
 
           cat > app/src/main/res/values/strings.xml <<'EOF'
-          <resources><string name="app_name">FocusLock</string></resources>
+          <resources>
+            <string name="app_name">FocusLock</string>
+          </resources>
           EOF
-            - name: Build
-        script: gradle assembleDebug
     artifacts:
-            - "**/app/build/outputs/apk/debug/*.apk"
+      - "**/app/build/outputs/apk/debug/*.apk"
