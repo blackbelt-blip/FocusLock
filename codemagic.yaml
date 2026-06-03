@@ -7,10 +7,9 @@ workflows:
     scripts:
       - name: Find project and build
         script: |
-          PROJECT=$(find . -type f -name "gradlew" | head -1 | xargs dirname)
+          PROJECT=$(find . -type d -name "app" -exec test -e "{}/build.gradle" \; -print | head -1 | xargs dirname)
           echo "Building in $PROJECT"
-          cd $PROJECT
-          chmod +x gradlew
-          ./gradlew assembleRelease
+          cd "$PROJECT"
+          gradle assembleRelease
     artifacts:
       - "**/app/build/outputs/apk/release/*.apk"
