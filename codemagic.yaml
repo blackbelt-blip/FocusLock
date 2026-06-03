@@ -5,18 +5,27 @@ workflows:
     environment:
       java: 17
     scripts:
-      - name: SHOW ME YOUR FILES
+      - name: Fix project structure
         script: |
-          echo "=== ROOT ==="
-          ls -la
-          echo "=== FIND GRADLE FILES ==="
-          find . -name "build.gradle" -o -name "settings.gradle" | head -20
-          echo "=== FIND APP FOLDER ==="
-          find . -type d -name "app"
+          # rename App to app
+          [ -d App ] && mv App app
+          
+          # create missing settings.gradle
+          echo "rootProject.name = 'FocusLock'" > settings.gradle
+          echo "include ':app'" >> settings.gradle
+          
+          # create missing top-level build.gradle
+          cat > build.gradle <<'EOF'
+          buildscript {
+              repositories { google(); mavenCentral() }
+              dependencies { classpath 'com.android.tools.build:gradle:8.2.2' }
+          }
+          allprojects {
+              repositories { google(); mavenCentral() }
+          }
+          EOF
+          
       - name: Build
-        script: |
-          PROJECT=$(find . -name "settings.gradle" -exec dirname {} \; | head -1)
-          cd "$PROJECT"
-          gradle assembleRelease
+        script: gradle assembleRelease
     artifacts:
       - "**/app/build/outputs/apk/release/*.apk"
