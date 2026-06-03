@@ -61,6 +61,6 @@ workflows:
           EOF
 
       - name: Build APK
-        script: gradle assembleRelease
+        script: gradle assembleDebug
     artifacts:
-      - "**/app/build/outputs/apk/release/*.apk"
+      - "**/app/build/outputs/apk/debug/*.apk"
